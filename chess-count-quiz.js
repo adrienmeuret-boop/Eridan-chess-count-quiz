@@ -248,6 +248,24 @@ function loadNewPuzzle() {
   if (form) form.onsubmit = submitAnswers;
 }
 
+function startNewGame() {
+  // Sélection du joueur à jouer
+  const selected = document.querySelector('input[name="playerToMove"]:checked').value;
+  setPlayerToMove(selected);
+  setPlayerToMoveAfter();
+
+  // Initialisation du board
+  setBoard();
+
+  // Réinitialisation du jeu
+  gameEnded = false;
+  resetScore();
+  loadNewPuzzle();
+  focusInputForPlayerToMove();
+  chess_data.timeRemaining = chess_data.showTimer ? chess_data.defaultTimeRemaining : 9999;
+  initTimer();
+}
+
 // -----------------------------------------------------------
 // Timer and score code
 
