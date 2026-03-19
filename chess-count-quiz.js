@@ -745,6 +745,49 @@ function isPawnMove(move) {
 }
 
 // -----------------------------------------------------------
+// Submit answers
+
+function submitAnswers(event) {
+  if (event) event.preventDefault(); // Bloque le submit normal du form
+
+  const questionTypes = getFixedDisplayQuestionTypes();
+  let allCorrect = true;
+
+  questionTypes.forEach((id) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+
+    const userValue = Number(input.value);
+    const correctValue = chess_data.correct?.[id]?.count ?? 0;
+
+    const feedbackIcon = document.getElementById(id + "FeedbackIcon");
+    if (userValue === correctValue) {
+      if (feedbackIcon) {
+        feedbackIcon.textContent = "✔";
+        feedbackIcon.className = "feedbackIcon correct";
+      }
+      chess_data.is_correct[id] = true;
+    } else {
+      if (feedbackIcon) {
+        feedbackIcon.textContent = "✖";
+        feedbackIcon.className = "feedbackIcon wrong";
+      }
+      chess_data.is_correct[id] = false;
+      allCorrect = false;
+    }
+  });
+
+  if (allCorrect) {
+    playBuzz();
+    incrementScore();
+    gameEnded = true;
+    revealAnswers();
+  } else {
+    penalizeTime();
+  }
+}
+
+// -----------------------------------------------------------
 // Export / module stubs (if needed for bundlers)
 
 if (typeof window !== "undefined") {
