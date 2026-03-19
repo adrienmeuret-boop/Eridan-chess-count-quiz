@@ -798,6 +798,24 @@ if (typeof window !== "undefined") {
   window.resetBoardToCurrentPuzzle = resetBoardToCurrentPuzzle;
 }
 
+function setupSettingsModal() {
+  const settingsBtn = document.getElementById("settingsButton");
+  if (!settingsBtn) return;
+
+  settingsBtn.addEventListener("click", () => {
+    const modal = document.getElementById("settingsModal");
+    if (modal) modal.style.display = "block";
+  });
+
+  const closeBtn = document.getElementById("closeSettingsModal");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      const modal = document.getElementById("settingsModal");
+      if (modal) modal.style.display = "none";
+    });
+  }
+}
+
 // -----------------------------------------------------------
 // Boot sequence
 
