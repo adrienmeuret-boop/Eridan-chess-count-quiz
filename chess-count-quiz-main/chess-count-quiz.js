@@ -1,4 +1,15 @@
 // -----------------------------------------------------------
+// Robust function to get players from FEN
+
+function getPlayersFromFen(fen) {
+  if (!fen || typeof fen !== "string") throw new Error("Invalid FEN string");
+  const parts = fen.split(" ");
+  if (parts.length < 2 || !["w","b"].includes(parts[1])) throw new Error("FEN missing turn info");
+  const turn = parts[1];
+  return { p1: turn, p2: turn === "w" ? "b" : "w" };
+}
+
+// -----------------------------------------------------------
 // Global variables
 
 let chess_data = null; // See loadSettings for value of chess_data
@@ -50,6 +61,9 @@ function countAllLegal(game) {
 
 // Return a game where it's the specified player to move ('w' or 'b') from the given FEN
 function switchFenSides(fen, side) {
+  // New robust version using getPlayersFromFen
+  const players = getPlayersFromFen(fen);
+  if (side !== "w" && side !== "b") throw new Error("Side must be 'w' or 'b'");
   const fenParts = fen.split(" ");
   fenParts[1] = side;
   return fenParts.join(" ");
@@ -308,690 +322,385 @@ function highlightSquares(squares) {
 });
 }
 
+// -----------------------------------------------------------
+// Audio & buzzer
+
+function playBuzz() {
+  try {
+    if (!playBuzz._ctx || !playBuzz._buffer) return;
+    const source = playBuzz._ctx.createBufferSource();
+    source.buffer = playBuzz._buffer;
+    source.connect(playBuzz._ctx.destination);
+    source.start();
+  } catch (e) {
+    console.warn("Failed to play buzzer:", e);
+  }
+}
 
 // -----------------------------------------------------------
-// Piece markers (6 zones)
+// End game handling
 
-function ensurePieceMarkers() {
-  const boardEl = document.getElementById("board");
-  if (!boardEl) return;
+function endGame() {
+  const movesList = document.getElementById("movesList");
+  if (movesList) movesList.style.display = "block";
 
-  const squares = boardEl.querySelectorAll(".square-55d63");
+  // Disable inputs
+  getFixedDisplayQuestionTypes().forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) input.disabled = true;
+  });
 
-  squares.forEach((sqEl) => {
-    if (!sqEl.querySelector(":scope > .pmBig")) {
-      const big = document.createElement("div");
-      big.className = "pmBig";
-      sqEl.appendChild(big);
-    }
+  const startBtn = document.getElementById("startButton");
+  if (startBtn) startBtn.disabled = false;
 
-    if (sqEl.querySelector(":scope > .pm6")) return;
+  // Optional: Highlight remaining correct moves
+  revealAnswers();
+}
 
-    const wrap = document.createElement("div");
-    wrap.className = "pm6";
+// -----------------------------------------------------------
+// Utility functions
 
-    ["p", "n", "b", "r", "q", "k"].forEach((piece) => {
-      const d = document.createElement("div");
-      d.className = `pm ${piece}`;
-      wrap.appendChild(d);
-    });
+function deepCopy(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
 
-    sqEl.appendChild(wrap);
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// -----------------------------------------------------------
+// Color helpers
+
+function otherColor(color) {
+  return color === "w" ? "b" : "w";
+}
+
+function isWhite(color) {
+  return color === "w";
+}
+
+function isBlack(color) {
+  return color === "b";
+}
+
+// -----------------------------------------------------------
+// FEN helpers
+
+function fenPieceCounts(fen) {
+  const parts = fen.split(" ");
+  const boardPart = parts[0];
+  const counts = { p: 0, n: 0, b: 0, r: 0, q: 0, k: 0, P: 0, N: 0, B: 0, R: 0, Q: 0, K: 0 };
+  boardPart.split("").forEach((c) => {
+    if (counts[c] !== undefined) counts[c]++;
+  });
+  return counts;
+}
+
+// -----------------------------------------------------------
+// PGN helpers
+
+function extractMovesFromPgn(pgn) {
+  const lines = pgn.split("\n").filter((l) => !l.startsWith("["));
+  const text = lines.join(" ");
+  const moveTokens = text
+    .replace(/\{.*?\}/g, "")
+    .replace(/\d+\./g, "")
+    .replace(/\.\.\./g, "")
+    .trim()
+    .split(/\s+/);
+  return moveTokens.filter((t) => t.length > 0);
+}
+
+// -----------------------------------------------------------
+// Chessboard helpers
+
+function flipBoardIfNeeded() {
+  if (!chess_data.board) return;
+  const player = chess_data.playerToMove;
+  const currentOrientation = chess_data.board.orientation();
+  if ((player === "w" && currentOrientation !== "white") || (player === "b" && currentOrientation !== "black")) {
+    chess_data.board.flip();
+  }
+}
+
+// -----------------------------------------------------------
+// Debug helpers
+
+function logFen(fen) {
+  console.log("FEN:", fen);
+}
+
+function logGameState(game) {
+  console.log("Game FEN:", game.fen());
+  console.log("History:", game.history());
+}
+
+// -----------------------------------------------------------
+// Input helpers
+
+function setInputValue(inputId, value) {
+  const el = document.getElementById(inputId);
+  if (el) el.value = value;
+}
+
+function disableInputs() {
+  getFixedDisplayQuestionTypes().forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) input.disabled = true;
   });
 }
 
-function clearPieceMarkers() {
-  const boardEl = document.getElementById("board");
-  if (!boardEl) return;
-
-  boardEl.querySelectorAll(".pm6 .pm.on, .pm6 .pm.solid").forEach((el) => el.classList.remove("on", "solid"));
-}
-
-function clearBigMarkers() {
-  const boardEl = document.getElementById("board");
-  if (!boardEl) return;
-
-  boardEl.querySelectorAll(".pmBig").forEach((el) => {
-    el.classList.remove("on", "side-w", "side-b");
-    el.classList.remove("piece-p", "piece-n", "piece-b", "piece-r", "piece-q", "piece-k");
+function enableInputs() {
+  getFixedDisplayQuestionTypes().forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) input.disabled = false;
   });
 }
 
-function markSquarePiece(square, piece) {
+// -----------------------------------------------------------
+// Highlight helpers
+
+function setBigMarker(square, piece, side) {
   const boardEl = document.getElementById("board");
   if (!boardEl) return;
-
   const sqEl = boardEl.querySelector(`[data-square="${square}"]`) || boardEl.querySelector(`.square-${square}`);
   if (!sqEl) return;
-
-  if (!sqEl.querySelector(":scope > .pm6")) ensurePieceMarkers();
-
-  const marker = sqEl.querySelector(`:scope > .pm6 .pm.${piece}`);
-  if (marker) marker.classList.add("on");
+  const big = sqEl.querySelector(":scope > .pmBig");
+  if (!big) return;
+  big.className = "pmBig on";
+  if (piece) big.classList.add(`piece-${piece}`);
+  else if (side) big.classList.add(side === "w" ? "side-w" : "side-b");
 }
 
-function highlightMovesByPiece(moveList, side) {
+// -----------------------------------------------------------
+// Player helpers
+
+function getPlayerForQuestionType(qType) {
+  if (!qType.startsWith("p1") && !qType.startsWith("p2")) throw new RangeError("Expected p1 or p2");
+  const fenTurn = chess_data.playerToMoveAfter;
+  return qType.startsWith("p1") ? fenTurn : otherColor(fenTurn);
+}
+
+// -----------------------------------------------------------
+// Move validation helpers
+
+function isMoveCheck(game, move) {
+  const temp = new Chess(game.fen());
+  temp.move(move);
+  return temp.in_check();
+}
+
+function isMoveCapture(move) {
+  return move.flags.includes("c") || move.flags.includes("e");
+}
+
+// -----------------------------------------------------------
+// Misc helpers
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60).toString().padStart(2, "0");
+  const secs = (seconds % 60).toString().padStart(2, "0");
+  return `${mins}:${secs}`;
+}
+
+// -----------------------------------------------------------
+// Initialize default chess_data (backup)
+
+function resetChessDataDefaults() {
+  chess_data.score = 0;
+  chess_data.is_correct = {};
+  chess_data.fen = null;
+  chess_data.correct = null;
+  chess_data.playerToMove = "w";
+  chess_data.playerToMoveAfter = "w";
+  chess_data.plyAhead = 0;
+  chess_data.game_index = null;
+  chess_data.ply = 0;
+}
+
+// -----------------------------------------------------------
+// Puzzle navigation
+
+function nextPuzzle() {
+  if (gameEnded) return;
+  loadNewPuzzle();
+  focusInputForPlayerToMove();
+}
+
+// -----------------------------------------------------------
+// Reset / refresh board
+
+function resetBoardToCurrentPuzzle() {
+  if (!chess_data.game) return;
+  chess_data.board.position(chess_data.game.fen());
+  chess_data.playerToMoveAfter = chess_data.plyAhead % 2 === 0 ? chess_data.playerToMove : otherColor(chess_data.playerToMove);
+  clearBoardHighlights();
   clearPieceMarkers();
   clearBigMarkers();
   ensurePieceMarkers();
-
-  if (!Array.isArray(moveList)) return;
-
-  const map = new Map();
-
-  moveList.forEach((m) => {
-    if (!m?.to || !m?.piece) return;
-    if (!map.has(m.to)) map.set(m.to, new Map());
-    const counts = map.get(m.to);
-    counts.set(m.piece, (counts.get(m.piece) || 0) + 1);
-  });
-
-  const boardEl = document.getElementById("board");
-
-  for (const [sq, counts] of map.entries()) {
-    const piecesDistinct = Array.from(counts.keys());
-
-    piecesDistinct.forEach((p) => markSquarePiece(sq, p));
-
-    const sqEl = boardEl.querySelector(`[data-square="${sq}"]`) || boardEl.querySelector(`.square-${sq}`);
-    if (!sqEl) continue;
-
-    const pm6 = sqEl.querySelector(":scope > .pm6");
-    if (!pm6) continue;
-
-    for (const p of piecesDistinct) {
-      if ((counts.get(p) || 0) >= 2) {
-        const mini = pm6.querySelector(`.pm.${p}`);
-        if (mini) mini.classList.add("solid");
-      }
-    }
-
-    const big = sqEl.querySelector(":scope > .pmBig");
-    if (!big) continue;
-
-    big.classList.add("on");
-    big.classList.remove(
-      "piece-p",
-      "piece-n",
-      "piece-b",
-      "piece-r",
-      "piece-q",
-      "piece-k",
-      "side-w",
-      "side-b"
-    );
-
-    if (piecesDistinct.length === 1) big.classList.add(`piece-${piecesDistinct[0]}`);
-    else big.classList.add(side === "w" ? "side-w" : "side-b");
-  }
-}
-
-function setupHighlightButtons() {
-  const labels = {
-    "white’s moves": "w",
-    "black’s moves": "b",
-    "white’s checks": "w",
-    "black’s checks": "b",
-    "white’s captures": "w",
-    "black’s captures": "b",
-    clear: null,
-  };
-
-  const norm = (s) =>
-    (s || "")
-      .trim()
-      .toLowerCase()
-      .replaceAll("'", "’")
-      .replace(/\s+/g, " ");
-
-  document.querySelectorAll("#boardHighlightsControls button").forEach((btn) => {
-    const key = norm(btn.textContent);
-    const side = labels[key];
-
-    btn.type = "button";
-    btn.onclick = () => {
-      if (!side) {
-        // clear
-        clearBoardHighlights();
-        clearPieceMarkers();
-        clearBigMarkers();
-        return;
-      }
-
-if (!chess_data.correct) chess_data.correct = {};
-
-const fenTurn = chess_data.playerToMoveAfter;
-
-let kind;
-if (key.includes("moves")) kind = "AllLegal";
-else if (key.includes("checks")) kind = "Checks";
-else if (key.includes("captures")) kind = "Captures";
-
-const qType = qTypeForAbsColorAndKind(side, kind, fenTurn);
-
-let ans = chess_data.correct[qType];
-if (!ans) {
-  ans = getOneCorrectAnswer(chess_data.fen, qType);
-  chess_data.correct[qType] = ans;
-}
-
-      if (!ans?.targets) return;
-      highlightMovesByPiece(ans.targets, side);
-    };
-  });
-}
-
-// ----------------------------------------------------------
-// Moves table (remainingMoves) corrigée
-function createMovesTableHtml(movesList, fenTurn) {
-  let tableHtml = `<h3>Compute counts after these moves:</h3>
-<table class="moves-table">`;
-
-  const totalMoves = movesList.length;
-  let turnNumber = 1;
-
-  // Déterminer la couleur du premier coup réel dans le slice
-  // vrai = blanc, faux = noir
-  let currentIsWhite = fenTurn === "w";
-
-  let i = 0;
-  while (i < totalMoves) {
-    let whiteMove = "";
-    let blackMove = "";
-
-    if (currentIsWhite) {
-      // Premier coup à jouer = blanc
-      whiteMove = movesList[i] || "";
-      i++;
-      currentIsWhite = false;
-
-      if (i < totalMoves) {
-        blackMove = movesList[i] || "";
-        i++;
-        currentIsWhite = true;
-      }
-    } else {
-      // Premier coup à jouer = noir → colonne blanche vide = "..."
-      whiteMove = "...";
-      blackMove = movesList[i] || "";
-      i++;
-      currentIsWhite = true;
-    }
-
-    tableHtml += `
-    <tr>
-      <td class="turn">${turnNumber}.</td>
-      <td class="w">${whiteMove}</td>
-      <td class="b">${blackMove}</td>
-    </tr>`;
-
-    turnNumber++;
-  }
-
-  tableHtml += "</table>";
-  return tableHtml;
-}
-
-function updateMovesDisplay() {
-  const movesDisplay = document.getElementById("remainingMoves");
-  if (!movesDisplay || chess_data.plyAhead === 0) {
-    if (movesDisplay) movesDisplay.innerHTML = "";
-    return;
-  }
-
-  const fullHistory = chess_data.game.history();
-  const startIndex = fullHistory.length - chess_data.plyAhead;
-  const movesList = fullHistory.slice(startIndex);
-
-  // Déterminer le joueur à jouer pour le premier coup affiché
-  const firstMoveIsWhite = (startIndex % 2 === 0); // vrai si premier coup slice = blanc
-  const fenTurnAfterPlyAhead = firstMoveIsWhite ? "w" : "b";
-
-  movesDisplay.innerHTML = createMovesTableHtml(movesList, fenTurnAfterPlyAhead);
-}
-
-function getMovesInputIdForPlayerToMove() {
-  // le vrai joueur à jouer
-  const fenTurn = chess_data.playerToMoveAfter;
-  // p1 = joueur à jouer
-  return qTypeForAbsColorAndKind(fenTurn, "AllLegal", fenTurn);
-}
-// ----------------------------------------------------------
-// Game load / puzzle
-
-function loadNewPuzzle() {
-  
-  clearBoardHighlights();
-
-  const game_and_ply = getRandomPosNumber(chess_data.game_weights, chess_data.playerToMoveAfter === "w");
-  chess_data.game_index = game_and_ply.game;
-  chess_data.ply = game_and_ply.ply;
-
-chess_data.game = getGame(game_and_ply.game, game_and_ply.ply);
-chess_data.fen = chess_data.game.fen();
-
-// recalculer joueur à jouer **après la création du jeu**
-setPlayerToMoveAfter();
-
-createDynamicInputs(getFixedDisplayQuestionTypes());
-
-const prior_game = getGame(game_and_ply.game, Math.max(0, game_and_ply.ply - chess_data.plyAhead));
-chess_data.board.position(prior_game.fen());
-// Afficher le joueur avec le trait en bas
-if (chess_data.playerToMove === "b") {
-  chess_data.board.flip();
-}
-
-  ensurePieceMarkers();
-  clearPieceMarkers();
   updateMovesDisplay();
-
-const allTypes = getFixedDisplayQuestionTypes();
-chess_data.correct = getCorrectAnswers(chess_data.fen, allTypes);
-
-  // Pre-calc AllLegal for highlight buttons (useful even if not asked)
-
-  chess_data.is_correct = Object.fromEntries(getFixedDisplayQuestionTypes().map((name) => [name, false]));
-
-  getFixedDisplayQuestionTypes().forEach((id) => {
-    const input = document.getElementById(id);
-    if (input) input.value = 0;
-
-    const feedbackIcon = document.getElementById(id + "FeedbackIcon");
-    if (feedbackIcon) {
-      feedbackIcon.textContent = "";
-      feedbackIcon.className = "feedbackIcon";
-    }
-
-    const shownMovesLabel = document.getElementById(id + "ShownMoves");
-    if (shownMovesLabel) shownMovesLabel.textContent = "";
-  });
-
-  // Clear movesList (bottom) when new puzzle loads
-  const movesList = document.getElementById("movesList");
-  if (movesList) {
-    movesList.innerHTML = "";
-    movesList.style.display = "none";
-  }
-
-  const showMovesButton = document.getElementById("showMovesButton");
-  if (showMovesButton) {
-    showMovesButton.disabled = false;
-    showMovesButton.style.backgroundColor = "";
-  }
-
-  const form = document.getElementById("chessCountForm");
-  if (form) form.onsubmit = submitAnswers;
-}
-
-function startNewGame() {
-  // Sélection du joueur à jouer
-  const selected = document.querySelector('input[name="playerToMove"]:checked').value;
-  setPlayerToMove(selected);
-  setPlayerToMoveAfter();
-
-  // Initialisation du board
-  setBoard();
-
-  // Réinitialisation du jeu
-  gameEnded = false;
-  resetScore();
-loadNewPuzzle();
-focusInputForPlayerToMove(); // <-- ajouter cette ligne
-chess_data.timeRemaining = chess_data.showTimer ? chess_data.defaultTimeRemaining : 9999;
-initTimer();
-}
-// ----------------------------------------------------------
-
-// Renvoie "w" ou "b" pour un ID donné
-function playerColorForInputId(id) {
-  if (id.startsWith("p1")) return chess_data.playerToMoveAfter; // joueur ayant le trait
-  else return chess_data.playerToMoveAfter === "w" ? "b" : "w";  // l’autre joueur
-}
-
-// Submit answers
-
-function submitAnswers(event) {
-  event.preventDefault();
-
-  if (!chess_data || !chess_data.correct) return;
-
-  const prevTime = chess_data.timeRemaining;
-
-  // 🔥 Construire la liste réelle des inputs à corriger
-  // On ne prend QUE ceux qui sont cochés dans Settings
-  const activeDisplayed = getFixedDisplayQuestionTypes().filter((id) => chess_data.questionTypes.includes(id));
-
-  activeDisplayed.forEach((id) => {
-    const input = document.getElementById(id);
-    if (!input) return;
-
-    const correct = chess_data.correct[id];
-    if (!correct) return;
-
-    const inputValue = parseInt(input.value, 10);
-    const isCorrect = inputValue === correct.count;
-
-    const feedbackIcon = document.getElementById(id + "FeedbackIcon");
-    if (feedbackIcon) {
-      feedbackIcon.textContent = isCorrect ? "✓" : "✗";
-      feedbackIcon.className = isCorrect ? "feedbackIcon correct" : "feedbackIcon incorrect";
-    }
-
-    if (!chess_data.is_correct[id] && isCorrect) {
-      chess_data.is_correct[id] = true;
-      incrementScore();
-    }
-
-    if (!isCorrect) penalizeTime();
-  });
-
-  if (gameEnded) return;
-
-  // Jouer le buzzer si le temps s'écoule
-  if (prevTime > 0 && chess_data.timeRemaining === 0) playBuzz();
-  if (chess_data.timeRemaining <= 0) {
-    gameEnded = true;
-    endGame();
-    return;
-  }
-
-  // Vérifier si tous les inputs cochés sont corrects
-  const allCorrect = activeDisplayed.every((id) => chess_data.is_correct[id]);
-
-  if (allCorrect) {
-    loadNewPuzzle();
-    focusInputForPlayerToMove();
-  }
-}
-
-// ----------------------------------------------------------
-// Settings dialog box
-
-function setupSettingsModal() {
-  const settings = document.getElementById("settingsModal");
-  const settingsBtn = document.getElementById("settingsButton");
-  const closeBtn = document.querySelector("#settingsModal .close-button");
-
-  if (!settings) return;
-
-  // Force closed on load (even if CSS modal is broken)
-  settings.style.display = "none";
-
-  if (settingsBtn) {
-    settingsBtn.type = "button";
-    settingsBtn.onclick = () => (settings.style.display = "block");
-  }
-
-  if (closeBtn) {
-    closeBtn.onclick = () => (settings.style.display = "none");
-  }
-
-  window.addEventListener("click", (event) => {
-    if (event.target === settings) settings.style.display = "none";
-  });
-}
-
-function setTimerVisibility(visible) {
-  const timerSection = document.getElementById("timerSection");
-  if (!timerSection) return;
-  timerSection.style.display = visible ? "block" : "none";
-}
-
-// ----------------------------------------------------------
-// Load settings
-
-async function loadSettings() {
-  chess_data = {
-    showTimer: true,
-    fen: null,
-    correct: null,
-    defaultTimeRemaining: 180,
-    timeRemaining: 999,
-    score: 0,
-    is_correct: null,
-    games: null,
-    game_weights: null,
-    board: null,
-    questionTypes: null,
-    plyAhead: 0,
-    playerToMove: "w",
-    playerToMoveAfter: "w",
-  };
-
-  chess_data.showTimer = localStorage.getItem("showTimer") === "false" ? false : true;
-  const showTimerEl = document.getElementById("showTimer");
-  if (showTimerEl) showTimerEl.checked = chess_data.showTimer;
-  setTimerVisibility(chess_data.showTimer);
-
-    const savedDefaultTimeRemaining = localStorage.getItem("defaultTimeRemaining");
-  chess_data.defaultTimeRemaining = savedDefaultTimeRemaining ? parseInt(savedDefaultTimeRemaining, 10) : chess_data.defaultTimeRemaining;
-
-  const defaultTimeMinutesEl = document.getElementById("defaultTimeMinutes");
-  if (defaultTimeMinutesEl) defaultTimeMinutesEl.value = Math.max(1, Math.round(chess_data.defaultTimeRemaining / 60));
-
-  const selectedToMoveStored = localStorage.getItem("selectedToMove") || "Random";
-  const radio = document.querySelector(`input[value="${selectedToMoveStored}"]`);
-  if (radio) radio.checked = true;
-  setPlayerToMove(selectedToMoveStored);
-
-  const savedPlyAhead = localStorage.getItem("plyAhead");
-  chess_data.plyAhead = savedPlyAhead ? parseInt(savedPlyAhead, 10) : 0;
-  const plyAheadEl = document.getElementById("plyAhead");
-  if (plyAheadEl) plyAheadEl.value = chess_data.plyAhead;
-
-  setPlayerToMoveAfter();
-
-  chess_data.games = await getGames();
-  chess_data.game_weights = await getWeights();
-  setBoard();
-
-  const storedTypes = localStorage.getItem("questionTypes");
-  if (storedTypes) chess_data.questionTypes = JSON.parse(storedTypes);
-  else chess_data.questionTypes = ["p1Checks", "p1Captures", "p2Checks", "p2Captures"];
-
-  document.querySelectorAll('input[name="quizOption"]').forEach((option) => (option.checked = false));
-  chess_data.questionTypes.forEach((questionType) => {
-    const el = document.querySelector(`input[value="${questionType}"]`);
-    if (el) el.checked = true;
-  });
-
-setupHighlightButtons();
-}
-
-function setPlayerToMove(selected) {
-  const el = document.querySelector(`input[value="${selected}"]`);
-  if (el) el.checked = true;
-
-  if (selected === "White") chess_data.playerToMove = "w";
-  else if (selected === "Black") chess_data.playerToMove = "b";
-  else chess_data.playerToMove = Math.random() < 0.5 ? "w" : "b";
-}
-
-function setPlayerToMoveAfter() {
-  chess_data.playerToMoveAfter =
-    chess_data.plyAhead % 2 === 0 ? chess_data.playerToMove : chess_data.playerToMove === "w" ? "b" : "w";
-}
-
-function setBoard() {
-chess_data.board = Chessboard("board", { position: "start" });
-  ensurePieceMarkers();
-}
-
-// ----------------------------------------------------------
-// Dynamic inputs
-
-// ----------------------------------------------------------
-// Dynamic inputs
-
-function createDynamicInputs(questionTypes, doFocus = true) {
-  const container = document.getElementById("count-inputs");
-  if (!container) return;
-  container.innerHTML = "";
-
-  questionTypes.forEach((questionType) => {
-    const div = document.createElement("div");
-    div.className = "input-group";
-
-    const label = document.createElement("label");
-    label.textContent = createDynamicInputsLabel(questionType);
-
-    const input = document.createElement("input");
-    input.type = "number";
-    input.id = questionType;
-    input.name = questionType;
-    input.min = "0";
-    input.value = 0;
-    input.required = true;
-
-    const decrementButton = document.createElement("button");
-    decrementButton.type = "button";
-    decrementButton.textContent = "←";
-    decrementButton.className = "decrement";
-    decrementButton.onclick = () => {
-      if (parseInt(input.value || "0", 10) > 0)
-        input.value = parseInt(input.value || "0", 10) - 1;
-    };
-
-    const incrementButton = document.createElement("button");
-    incrementButton.type = "button";
-    incrementButton.textContent = "→";
-    incrementButton.className = "increment";
-    incrementButton.onclick = () => {
-      input.value = parseInt(input.value || "0", 10) + 1;
-    };
-
-    const feedbackIcon = document.createElement("span");
-    feedbackIcon.className = "feedbackIcon";
-    feedbackIcon.id = `${questionType}FeedbackIcon`;
-
-    const shownMoves = document.createElement("label");
-    shownMoves.className = "shownMoves";
-    shownMoves.id = `${questionType}ShownMoves`;
-
-    div.appendChild(label);
-    div.appendChild(decrementButton);
-    div.appendChild(input);
-    div.appendChild(incrementButton);
-    div.appendChild(feedbackIcon);
-    div.appendChild(shownMoves);
-
-    container.appendChild(div);
-  });
-
-  // ⚡ Focus automatique sur p1 = joueur ayant le trait
-  if (doFocus) focusInputForPlayerToMove();
-}
-
-function focusInputForPlayerToMove() {
-  const fenTurn = chess_data.playerToMoveAfter; // joueur qui a le trait
-  const inputId = qTypeForAbsColorAndKind(fenTurn, "AllLegal", fenTurn); // p1 = trait
-  const el = document.getElementById(inputId);
-  if (el) el.focus();
-}
-
-// ----------------------------------------------------------
-// saveSettings corrigée
-
-async function saveSettings() {
-  const showTimer = document.getElementById("showTimer").checked;
-  chess_data.showTimer = showTimer;
-  localStorage.setItem("showTimer", showTimer);
-  setTimerVisibility(showTimer);
-
-  const defaultTimeMinutesEl = document.getElementById("defaultTimeMinutes");
-  if (defaultTimeMinutesEl) {
-    const minutes = parseInt(defaultTimeMinutesEl.value, 10);
-    chess_data.defaultTimeRemaining = (isNaN(minutes) ? 3 : minutes) * 60;
-    localStorage.setItem("defaultTimeRemaining", chess_data.defaultTimeRemaining);
-  }
-
-  const selectedToMove = document.querySelector('input[name="playerToMove"]:checked');
-  localStorage.setItem("selectedToMove", selectedToMove.value);
-  setPlayerToMove(selectedToMove.value);
-
-  chess_data.games = await getGames();
-  chess_data.game_weights = await getWeights();
-  setBoard();
-
-  const questionCheckboxes = document.querySelectorAll('input[name="quizOption"]:checked');
-  chess_data.questionTypes = Array.from(questionCheckboxes).map((opt) => opt.value);
-  localStorage.setItem("questionTypes", JSON.stringify(chess_data.questionTypes));
-
-  // Création des inputs dynamiques avec focus correct sur p1
-  createDynamicInputs(getFixedDisplayQuestionTypes());
-
-  setupHighlightButtons();
-
-  const plyAhead = parseInt(document.getElementById("plyAhead").value, 10);
-  chess_data.plyAhead = plyAhead;
-  localStorage.setItem("plyAhead", plyAhead);
-
-  setPlayerToMoveAfter();
-
-  const settings = document.getElementById("settingsModal");
-  if (settings) settings.style.display = "none";
-}
-  
-function createDynamicInputsLabel(questionType) {
-let whoColor;
-if (questionType.startsWith("p1")) {
-  // p1 = joueur à qui c’est le trait → playerToMoveAfter
-  whoColor = chess_data.playerToMoveAfter;
-} else {
-  // p2 = l’autre joueur
-  whoColor = chess_data.playerToMoveAfter === "w" ? "b" : "w";
-}
-
-  // Nom du joueur pour le label
-  const who = whoColor === "w" ? "White's" : "Black's";
-
-  // Type de question
-  let what;
-  if (questionType.endsWith("Checks")) what = "Checks";
-  else if (questionType.endsWith("Captures")) what = "Captures";
-  else what = "Moves";
-
-  return `${who}\n${what}:`;
 }
 
 // -----------------------------------------------------------
-// Main boot
+// Audio preload helpers
 
-document.addEventListener("DOMContentLoaded", () => {
-
-  // Préchargement audio buzzer
-try {
-  if (!playBuzz._ctx) {
-    playBuzz._ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-    fetch("duck.mp3")
-      .then(r => r.arrayBuffer())
-      .then(b => playBuzz._ctx.decodeAudioData(b))
-      .then(buf => { playBuzz._buffer = buf; })
-      .catch(e => console.warn("Audio decode failed:", e));
+function preloadAudio(url) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    fetch(url)
+      .then((r) => r.arrayBuffer())
+      .then((b) => ctx.decodeAudioData(b))
+      .then((buf) => console.log(`Audio ${url} preloaded, duration: ${buf.duration}s`))
+      .catch((e) => console.warn("Audio decode failed:", e));
+  } catch (e) {
+    console.warn("AudioContext creation failed:", e);
   }
-} catch (e) {
-  console.warn("AudioContext creation failed:", e);
 }
-  
-  // Settings modal wiring
-  setupSettingsModal();
 
+// -----------------------------------------------------------
+// Debug utilities
+
+function logCorrectAnswers() {
+  console.log("Correct answers:", chess_data.correct);
+}
+
+function logScore() {
+  console.log("Score:", chess_data.score);
+}
+
+// -----------------------------------------------------------
+// Misc UI helpers
+
+function showElement(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = "block";
+}
+
+function hideElement(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = "none";
+}
+
+function setButtonDisabled(id, disabled) {
+  const btn = document.getElementById(id);
+  if (btn) btn.disabled = disabled;
+}
+
+function setButtonColor(id, color) {
+  const btn = document.getElementById(id);
+  if (btn) btn.style.backgroundColor = color;
+}
+
+// -----------------------------------------------------------
+// Local storage helpers
+
+function saveToLocalStorage(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    console.warn("Failed to save to localStorage:", key, e);
+  }
+}
+
+function loadFromLocalStorage(key, defaultValue) {
+  try {
+    const value = localStorage.getItem(key);
+    return value !== null ? JSON.parse(value) : defaultValue;
+  } catch (e) {
+    console.warn("Failed to load from localStorage:", key, e);
+    return defaultValue;
+  }
+}
+
+// -----------------------------------------------------------
+// Reset / New Game button
+
+function setupStartButton() {
   const startBtn = document.getElementById("startButton");
-  if (startBtn) {
-    startBtn.type = "button";
-    startBtn.addEventListener("click", startNewGame);
-  }
+  if (!startBtn) return;
+  startBtn.type = "button";
+  startBtn.addEventListener("click", startNewGame);
+}
 
-  // Show Answers button wiring
+// -----------------------------------------------------------
+// Reveal / hide answers buttons
+
+function setupShowMovesButton() {
   const btn = document.getElementById("showMovesButton");
-  if (btn) {
-    btn.type = "button";
-    btn.addEventListener("click", revealAnswers);
-  }
+  if (!btn) return;
+  btn.type = "button";
+  btn.addEventListener("click", revealAnswers);
+}
+
+// -----------------------------------------------------------
+// Window resize / board adjust
+
+window.addEventListener("resize", () => {
+  if (chess_data.board) chess_data.board.resize();
 });
 
-(async () => {
+// -----------------------------------------------------------
+// Quick helpers for testing
+
+function testLoadPuzzle() {
+  console.log("Loading new puzzle for testing...");
+  loadNewPuzzle();
+  focusInputForPlayerToMove();
+}
+
+function testIncrementScore() {
+  incrementScore();
+  logScore();
+}
+
+// -----------------------------------------------------------
+// Misc chess helpers
+
+function isKingMove(move) {
+  return move.piece.toLowerCase() === "k";
+}
+
+function isPawnMove(move) {
+  return move.piece.toLowerCase() === "p";
+}
+
+// -----------------------------------------------------------
+// Export / module stubs (if needed for bundlers)
+
+if (typeof window !== "undefined") {
+  window.getPlayersFromFen = getPlayersFromFen;
+  window.loadNewPuzzle = loadNewPuzzle;
+  window.startNewGame = startNewGame;
+  window.submitAnswers = submitAnswers;
+  window.resetBoardToCurrentPuzzle = resetBoardToCurrentPuzzle;
+}
+
+// -----------------------------------------------------------
+// Boot sequence
+
+document.addEventListener("DOMContentLoaded", async () => {
+  // Preload buzzer audio
+  try {
+    if (!playBuzz._ctx) {
+      playBuzz._ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const response = await fetch("duck.mp3");
+      const buffer = await response.arrayBuffer();
+      playBuzz._buffer = await playBuzz._ctx.decodeAudioData(buffer);
+      console.log("Buzzer loaded successfully");
+    }
+  } catch (e) {
+    console.warn("Failed to preload buzzer audio:", e);
+  }
+
+  // Setup UI
+  setupSettingsModal();
+  setupStartButton();
+  setupShowMovesButton();
+
+  // Load all settings and start state
   await loadSettings();
-})();
+});
