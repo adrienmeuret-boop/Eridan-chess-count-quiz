@@ -546,22 +546,6 @@ function resetBoardToCurrentPuzzle() {
 }
 
 // -----------------------------------------------------------
-// Audio preload helpers
-
-function preloadAudio(url) {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    fetch(url)
-      .then((r) => r.arrayBuffer())
-      .then((b) => ctx.decodeAudioData(b))
-      .then((buf) => console.log(`Audio ${url} preloaded, duration: ${buf.duration}s`))
-      .catch((e) => console.warn("Audio decode failed:", e));
-  } catch (e) {
-    console.warn("AudioContext creation failed:", e);
-  }
-}
-
-// -----------------------------------------------------------
 // Debug utilities
 
 function logCorrectAnswers() {
