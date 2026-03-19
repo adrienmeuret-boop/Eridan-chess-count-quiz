@@ -2,11 +2,15 @@
 // Robust function to get players from FEN
 
 function getPlayersFromFen(fen) {
-  if (!fen || typeof fen !== "string") throw new Error("Invalid FEN string");
+  if (typeof fen !== "string") return { p1: "w", p2: "b" };
+
   const parts = fen.split(" ");
-  if (parts.length < 2 || !["w","b"].includes(parts[1])) throw new Error("FEN missing turn info");
-  const turn = parts[1];
-  return { p1: turn, p2: turn === "w" ? "b" : "w" };
+  const turn = parts[1] === "b" ? "b" : "w";
+
+  return {
+    p1: turn,
+    p2: turn === "w" ? "b" : "w"
+  };
 }
 
 // -----------------------------------------------------------
