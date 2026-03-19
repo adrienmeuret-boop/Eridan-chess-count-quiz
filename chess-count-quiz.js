@@ -178,6 +178,76 @@ function getOneCorrectAnswer(fen, questionType) {
   throw new RangeError("Expected Checks or Captures or AllLegal");
 }
 
+// ----------------------------------------------------------
+// Load a new puzzle
+function loadNewPuzzle() {
+  if (!chess_data || !chess_data.games || !chess_data.game_weights) return;
+
+  clearBoardHighlights();
+
+  // Choisir aléatoirement un jeu et un ply selon la couleur du joueur à jouer
+  const game_and_ply = getRandomPosNumber(chess_data.game_weights, chess_data.playerToMoveAfter === "w");
+  chess_data.game_index = game_and_ply.game;
+  chess_data.ply = game_and_ply.ply;
+
+  // Charger le jeu à ce ply
+  chess_data.game = getGame(game_and_ply.game, game_and_ply.ply);
+  chess_data.fen = chess_data.game.fen();
+
+  // Mettre à jour le joueur à jouer après la création du jeu
+  setPlayerToMoveAfter();
+
+  // Créer les inputs dynamiques pour toutes les questions
+  createDynamicInputs(getFixedDisplayQuestionTypes());
+
+  // Mettre le plateau sur la position précédente si plyAhead > 0
+  const prior_game = getGame(game_and_ply.game, Math.max(0, game_and_ply.ply - chess_data.plyAhead));
+  chess_data.board.position(prior_game.fen());
+
+  // Si c’est au noir de jouer, retourner le board
+  if (chess_data.playerToMoveAfter === "b") chess_data.board.flip();
+
+  ensurePieceMarkers();
+  clearPieceMarkers();
+
+  // Mettre à jour la liste des coups restants
+  updateMovesDisplay();
+
+  // Calculer les réponses correctes pour toutes les questions
+  const allTypes = getFixedDisplayQuestionTypes();
+  chess_data.correct = getCorrectAnswers(chess_data.fen, allTypes);
+
+  // Réinitialiser l’état correct et les inputs
+  chess_data.is_correct = Object.fromEntries(allTypes.map((name) => [name, false]));
+  allTypes.forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) input.value = 0;
+    const feedbackIcon = document.getElementById(id + "FeedbackIcon");
+    if (feedbackIcon) {
+      feedbackIcon.textContent = "";
+      feedbackIcon.className = "feedbackIcon";
+    }
+    const shownMovesLabel = document.getElementById(id + "ShownMoves");
+    if (shownMovesLabel) shownMovesLabel.textContent = "";
+  });
+
+  // Clear movesList (en bas) et bouton "Show Moves"
+  const movesList = document.getElementById("movesList");
+  if (movesList) {
+    movesList.innerHTML = "";
+    movesList.style.display = "none";
+  }
+  const showMovesButton = document.getElementById("showMovesButton");
+  if (showMovesButton) {
+    showMovesButton.disabled = false;
+    showMovesButton.style.backgroundColor = "";
+  }
+
+  // Lier la soumission
+  const form = document.getElementById("chessCountForm");
+  if (form) form.onsubmit = submitAnswers;
+}
+
 // -----------------------------------------------------------
 // Timer and score code
 
